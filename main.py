@@ -1338,59 +1338,2063 @@ class Model:
                 costo += float('inf')
         return costo
 
-    # --------------------------------------------------------------------------
-    # QUICK REFERENCE — CICLI
-    #
-    #  TIPO CICLO          | CONDIZIONE                     | METODO NetworkX
-    #  --------------------|--------------------------------|----------------------
-    #  Euleriano           | tutti nodi grado pari          | is_eulerian()
-    #  Semi-euleriano      | esattamente 2 nodi grado disp. | is_semieulerian()
-    #  Cammino Euleriano   | <= 2 nodi grado dispari        | has_eulerian_path()
-    #  Hamiltoniano        | visita ogni nodo una volta     | (NP-completo)
-    #  TSP approssimato    | grafo completo pesato          | greedy_tsp / christofides
-    #
-    #  ATTENZIONE:
-    #  - Euleriano = percorri ogni ARCO una volta (facile, O(E))
-    #  - Hamiltoniano = visita ogni NODO una volta (difficile, NP)
-    # --------------------------------------------------------------------------
 
 
-# ==============================================================================
-# QUICK REFERENCE AGGIORNATO — tutto in un posto
-# ==============================================================================
-#
-#  DOMANDA                                   FILE      METODO
-#  ──────────────────────────────────────────────────────────────────────────────
-#  [SHORTEST PATH]
-#  Cammino minimo (num. archi)               Model     getShortestPath(s, t)
-#  Cammino minimo pesato (Dijkstra)          Model     getShortestPathPesato(s,t)
-#  Cammino minimo esplicito Dijkstra         Model     getDijkstraPath(s, t)
-#  Tutti cammini minimi (Floyd-Warshall)     Model     getFloydWarshall()
-#  Path specifico con Floyd-Warshall         Model     getFloydWarshallPath(s,t)
-#  Cammino minimo Bellman-Ford               Model     getBellmanFordPath(s, t)
-#  Tutti cammini Bellman-Ford                Model     getAllPairsBellmanFord()
-#  Tutti cammini Dijkstra (AP)               Model     getAllPairsDijkstra()
-#
-#  [CICLI EULERIANI]
-#  Grafo è euleriano?                        Model     isEulerian()
-#  Grafo è semi-euleriano?                   Model     isSemiEulerian()
-#  Esiste cammino euleriano?                 Model     hasEulerianPath()
-#  Trova circuito euleriano                  Model     getEulerianCircuit()
-#  Trova cammino euleriano                   Model     getEulerianPath()
-#  Rendi grafo euleriano                     Model     eulerize()
-#
-#  [CICLI HAMILTONIANI / TSP]
-#  Ciclo hamiltoniano approssimato (greedy)  Model     getTSPGreedy()
-#  Ciclo hamiltoniano Christofides (1.5x)    Model     getTSPChristofides()
-#  Ciclo hamiltoniano Sim. Annealing         Model     getTSPSimulatedAnnealing()
-#  Costo totale di un ciclo                  Model     getTSPCost(cycle)
-#
-#  [ALGORITMI — QUALE USARE?]
-#  Pesi >= 0, sorgente singola               →  Dijkstra
-#  Pesi >= 0, tutte le coppie               →  Floyd-Warshall
-#  Pesi negativi                             →  Bellman-Ford
-#  Grafo non pesato                          →  BFS (shortest_path senza weight)
-#
-#  [CICLI — QUALE USARE?]
-#  Ogni arco esattamente 1 volta             →  Euleriano (Hierholzer)
-#  Ogni nodo esattamente 1 volta             →  Hamiltoniano / TSP (appross.)
+
+
+
+
+
+
+##àCHIN0OOK
+
+# ══════════════════════════════════════════════════════════════
+# DAO
+# ══════════════════════════════════════════════════════════════
+
+from database.DB_connect import DBConnect
+from model.Arco import Arco
+
+
+class DAO():
+    def __init__(self):
+        pass
+
+    # ══════════════════════════════════════════════════════════════
+    # DROPDOWN
+    # ══════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def getAllGenre():
+        """
+        Popola il dropdown 'Genere'.
+        Usato in: esame Chinook 19/05/2026
+        Restituisce la lista dei nomi dei generi musicali.
+        """
+        cnx = DBConnect.get_connection()
+        try:
+            cursor = cnx.cursor(dictionary=True, buffered=True)
+            query = """SELECT DISTINCT name
+                       FROM genre
+                       ORDER BY name"""
+            cursor.execute(query)
+            res = []
+            for row in cursor:
+                res.append(row["name"])
+            return res
+        except Exception as e:
+            print(f"Errore getAllGenre: {e}")
+            return []
+        finally:
+            cursor.close()
+            cnx.close()
+
+    @staticmethod
+    def getAllArtistsByGenre(genre):
+        """
+        Popola il dropdown 'Artist' dopo aver scelto il genere.
+        Usato in: esame Chinook 19/05/2026 – Punto 2a
+        Restituisce i nomi degli artisti che hanno almeno un brano nel genere.
+        """
+        cnx = DBConnect.get_connection()
+        try:
+            cursor = cnx.cursor(dictionary=True, buffered=True)
+            query = """SELECT DISTINCT a.Name
+                       FROM artist a, album al, track t, genre g
+                       WHERE a.ArtistId = al.ArtistId
+                         AND al.AlbumId = t.AlbumId
+                         AND t.GenreId  = g.GenreId
+                         AND g.Name     = %s
+                       ORDER BY a.Name"""
+            cursor.execute(query, (genre,))
+            res = []
+            for row in cursor:
+                res.append(row["Name"])
+            return res
+        except Exception as e:
+            print(f"Errore getAllArtistsByGenre: {e}")
+            return []
+        finally:
+            cursor.close()
+            cnx.close()
+
+    # ══════════════════════════════════════════════════════════════
+    # NODI DEL GRAFO
+    # ══════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def getAllNodes(genre):
+        """
+        Restituisce tutti i nodi del grafo: artisti che hanno almeno un brano
+        nel genere selezionato.
+        Usato in: esame Chinook 19/05/2026 – Punto 1b (costruzione nodi)
+
+        Nota: i nodi sono identificati dal NOME dell'artista (stringa),
+        non dall'id numerico — coerente con idMapNames[nome] = nome.
+        """
+        cnx = DBConnect.get_connection()
+        try:
+            cursor = cnx.cursor(dictionary=True, buffered=True)
+            query = """SELECT DISTINCT a.Name
+                       FROM artist a, album al, track t, genre g
+                       WHERE a.ArtistId = al.ArtistId
+                         AND al.AlbumId = t.AlbumId
+                         AND t.GenreId  = g.GenreId
+                         AND g.Name     = %s"""
+            cursor.execute(query, (genre,))
+            res = []
+            for row in cursor:
+                res.append(row["Name"])
+            return res
+        except Exception as e:
+            print(f"Errore getAllNodes: {e}")
+            return []
+        finally:
+            cursor.close()
+            cnx.close()
+
+    # ══════════════════════════════════════════════════════════════
+    # ARCHI DEL GRAFO – VERSO A→B  (pop(A) > pop(B))
+    # ══════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def getAllEdges1(genre, idMapNames):
+        """
+        Archi orientati da A verso B quando popolarità(A) > popolarità(B).
+        Usato in: esame Chinook 19/05/2026 – Punto 1b
+
+        Logica:
+          - Due artisti A e B sono collegati se almeno un cliente ha
+            acquistato brani di entrambi (stesso CustomerId nelle fatture).
+          - La popolarità di un artista = numero di brani acquistati nel genere.
+          - Peso arco = pop(A) + pop(B).
+          - Questa query restituisce solo le coppie con pop(A) > pop(B)
+            → arco va da A verso B.
+        """
+        cnx = DBConnect.get_connection()
+        try:
+            cursor = cnx.cursor(dictionary=True, buffered=True)
+            query = """
+                SELECT DISTINCT
+                    a1.Name AS nomeA,
+                    a2.Name AS nomeB,
+                    p1.popolarita + p2.popolarita AS peso
+                FROM artist a1,
+                     artist a2,
+                     invoice i1,
+                     invoice i2,
+                     invoiceline il1,
+                     invoiceline il2,
+                     track t1,
+                     track t2,
+                     album al1,
+                     album al2,
+
+                     (SELECT al.ArtistId,
+                             COUNT(*) AS popolarita
+                      FROM invoiceline il, track t, album al
+                      WHERE il.TrackId = t.TrackId
+                        AND t.AlbumId  = al.AlbumId
+                        AND t.GenreId  = (SELECT GenreId FROM genre WHERE Name = %s)
+                      GROUP BY al.ArtistId) p1,
+
+                     (SELECT al.ArtistId,
+                             COUNT(*) AS popolarita
+                      FROM invoiceline il, track t, album al
+                      WHERE il.TrackId = t.TrackId
+                        AND t.AlbumId  = al.AlbumId
+                        AND t.GenreId  = (SELECT GenreId FROM genre WHERE Name = %s)
+                      GROUP BY al.ArtistId) p2
+
+                WHERE a1.ArtistId < a2.ArtistId
+                  AND p1.ArtistId = a1.ArtistId
+                  AND p2.ArtistId = a2.ArtistId
+                  AND il1.InvoiceId = i1.InvoiceId
+                  AND il2.InvoiceId = i2.InvoiceId
+                  AND i1.CustomerId = i2.CustomerId
+                  AND il1.TrackId   = t1.TrackId
+                  AND il2.TrackId   = t2.TrackId
+                  AND t1.AlbumId    = al1.AlbumId
+                  AND t2.AlbumId    = al2.AlbumId
+                  AND al1.ArtistId  = a1.ArtistId
+                  AND al2.ArtistId  = a2.ArtistId
+                  AND t1.GenreId    = (SELECT GenreId FROM genre WHERE Name = %s)
+                  AND t2.GenreId    = (SELECT GenreId FROM genre WHERE Name = %s)
+                  AND p1.popolarita > p2.popolarita
+            """
+            cursor.execute(query, (genre, genre, genre, genre))
+            res = []
+            for row in cursor:
+                if row["nomeA"] in idMapNames and row["nomeB"] in idMapNames:
+                    res.append(Arco(idMapNames[row["nomeA"]], idMapNames[row["nomeB"]], row["peso"]))
+            return res
+        except Exception as e:
+            print(f"Errore getAllEdges1: {e}")
+            return []
+        finally:
+            cursor.close()
+            cnx.close()
+
+    # ══════════════════════════════════════════════════════════════
+    # ARCHI DEL GRAFO – VERSO B→A  (pop(B) > pop(A))
+    # ══════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def getAllEdges2(genre, idMapNames):
+        """
+        Archi orientati da B verso A quando popolarità(B) > popolarità(A).
+        Usato in: esame Chinook 19/05/2026 – Punto 1b
+
+        Stessa query di getAllEdges1, cambia solo la condizione finale:
+            p1.popolarita < p2.popolarita   (invece di >)
+        Nel Model viene aggiunto come: add_edge(e.a2, e.a1, weight=e.peso)
+        """
+        cnx = DBConnect.get_connection()
+        try:
+            cursor = cnx.cursor(dictionary=True, buffered=True)
+            query = """
+                SELECT DISTINCT
+                    a1.Name AS nomeA,
+                    a2.Name AS nomeB,
+                    p1.popolarita + p2.popolarita AS peso
+                FROM artist a1,
+                     artist a2,
+                     invoice i1,
+                     invoice i2,
+                     invoiceline il1,
+                     invoiceline il2,
+                     track t1,
+                     track t2,
+                     album al1,
+                     album al2,
+
+                     (SELECT al.ArtistId,
+                             COUNT(*) AS popolarita
+                      FROM invoiceline il, track t, album al
+                      WHERE il.TrackId = t.TrackId
+                        AND t.AlbumId  = al.AlbumId
+                        AND t.GenreId  = (SELECT GenreId FROM genre WHERE Name = %s)
+                      GROUP BY al.ArtistId) p1,
+
+                     (SELECT al.ArtistId,
+                             COUNT(*) AS popolarita
+                      FROM invoiceline il, track t, album al
+                      WHERE il.TrackId = t.TrackId
+                        AND t.AlbumId  = al.AlbumId
+                        AND t.GenreId  = (SELECT GenreId FROM genre WHERE Name = %s)
+                      GROUP BY al.ArtistId) p2
+
+                WHERE a1.ArtistId < a2.ArtistId
+                  AND p1.ArtistId = a1.ArtistId
+                  AND p2.ArtistId = a2.ArtistId
+                  AND il1.InvoiceId = i1.InvoiceId
+                  AND il2.InvoiceId = i2.InvoiceId
+                  AND i1.CustomerId = i2.CustomerId
+                  AND il1.TrackId   = t1.TrackId
+                  AND il2.TrackId   = t2.TrackId
+                  AND t1.AlbumId    = al1.AlbumId
+                  AND t2.AlbumId    = al2.AlbumId
+                  AND al1.ArtistId  = a1.ArtistId
+                  AND al2.ArtistId  = a2.ArtistId
+                  AND t1.GenreId    = (SELECT GenreId FROM genre WHERE Name = %s)
+                  AND t2.GenreId    = (SELECT GenreId FROM genre WHERE Name = %s)
+                  AND p1.popolarita < p2.popolarita
+            """
+            cursor.execute(query, (genre, genre, genre, genre))
+            res = []
+            for row in cursor:
+                if row["nomeA"] in idMapNames and row["nomeB"] in idMapNames:
+                    res.append(Arco(idMapNames[row["nomeA"]], idMapNames[row["nomeB"]], row["peso"]))
+            return res
+        except Exception as e:
+            print(f"Errore getAllEdges2: {e}")
+            return []
+        finally:
+            cursor.close()
+            cnx.close()
+
+    # ══════════════════════════════════════════════════════════════
+    # ARCHI DEL GRAFO – DOPPIO VERSO A↔B  (pop(A) == pop(B))
+    # ══════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def getAllEdges3(genre, idMapNames):
+        """
+        Archi in entrambi i versi A↔B quando popolarità(A) == popolarità(B).
+        Usato in: esame Chinook 19/05/2026 – Punto 1b
+
+        Nel Model vengono aggiunti ENTRAMBI:
+            add_edge(e.a1, e.a2, weight=e.peso)
+            add_edge(e.a2, e.a1, weight=e.peso)
+        """
+        cnx = DBConnect.get_connection()
+        try:
+            cursor = cnx.cursor(dictionary=True, buffered=True)
+            query = """
+                SELECT DISTINCT
+                    a1.Name AS nomeA,
+                    a2.Name AS nomeB,
+                    p1.popolarita + p2.popolarita AS peso
+                FROM artist a1,
+                     artist a2,
+                     invoice i1,
+                     invoice i2,
+                     invoiceline il1,
+                     invoiceline il2,
+                     track t1,
+                     track t2,
+                     album al1,
+                     album al2,
+
+                     (SELECT al.ArtistId,
+                             COUNT(*) AS popolarita
+                      FROM invoiceline il, track t, album al
+                      WHERE il.TrackId = t.TrackId
+                        AND t.AlbumId  = al.AlbumId
+                        AND t.GenreId  = (SELECT GenreId FROM genre WHERE Name = %s)
+                      GROUP BY al.ArtistId) p1,
+
+                     (SELECT al.ArtistId,
+                             COUNT(*) AS popolarita
+                      FROM invoiceline il, track t, album al
+                      WHERE il.TrackId = t.TrackId
+                        AND t.AlbumId  = al.AlbumId
+                        AND t.GenreId  = (SELECT GenreId FROM genre WHERE Name = %s)
+                      GROUP BY al.ArtistId) p2
+
+                WHERE a1.ArtistId < a2.ArtistId
+                  AND p1.ArtistId = a1.ArtistId
+                  AND p2.ArtistId = a2.ArtistId
+                  AND il1.InvoiceId = i1.InvoiceId
+                  AND il2.InvoiceId = i2.InvoiceId
+                  AND i1.CustomerId = i2.CustomerId
+                  AND il1.TrackId   = t1.TrackId
+                  AND il2.TrackId   = t2.TrackId
+                  AND t1.AlbumId    = al1.AlbumId
+                  AND t2.AlbumId    = al2.AlbumId
+                  AND al1.ArtistId  = a1.ArtistId
+                  AND al2.ArtistId  = a2.ArtistId
+                  AND t1.GenreId    = (SELECT GenreId FROM genre WHERE Name = %s)
+                  AND t2.GenreId    = (SELECT GenreId FROM genre WHERE Name = %s)
+                  AND p1.popolarita = p2.popolarita
+            """
+            cursor.execute(query, (genre, genre, genre, genre))
+            res = []
+            for row in cursor:
+                if row["nomeA"] in idMapNames and row["nomeB"] in idMapNames:
+                    res.append(Arco(idMapNames[row["nomeA"]], idMapNames[row["nomeB"]], row["peso"]))
+            return res
+        except Exception as e:
+            print(f"Errore getAllEdges3: {e}")
+            return []
+        finally:
+            cursor.close()
+            cnx.close()
+
+    # ══════════════════════════════════════════════════════════════
+    # VARIANTE: GRAFO NON ORIENTATO
+    # Usato quando la consegna chiede un grafo NON orientato (es. imdb 26/05/2026)
+    # ══════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def getAllEdgesUndirected(genre, idMapNames):
+        """
+        Archi NON orientati: collega A e B se almeno un cliente ha
+        acquistato brani di entrambi. Peso = pop(A) + pop(B).
+
+        Usato quando la consegna dice 'grafo NON orientato ma pesato'.
+        Nel Model: self._graph = nx.Graph() e add_edge(e.a1, e.a2, weight=e.peso).
+
+        Differenza rispetto a getAllEdges1/2/3:
+          - Non si divide per verso (non c'è orientamento).
+          - Una sola query restituisce tutte le coppie distinte.
+        """
+        cnx = DBConnect.get_connection()
+        try:
+            cursor = cnx.cursor(dictionary=True, buffered=True)
+            query = """
+                SELECT DISTINCT
+                    a1.Name AS nomeA,
+                    a2.Name AS nomeB,
+                    p1.popolarita + p2.popolarita AS peso
+                FROM artist a1,
+                     artist a2,
+                     invoice i1,
+                     invoice i2,
+                     invoiceline il1,
+                     invoiceline il2,
+                     track t1,
+                     track t2,
+                     album al1,
+                     album al2,
+
+                     (SELECT al.ArtistId,
+                             COUNT(*) AS popolarita
+                      FROM invoiceline il, track t, album al
+                      WHERE il.TrackId = t.TrackId
+                        AND t.AlbumId  = al.AlbumId
+                        AND t.GenreId  = (SELECT GenreId FROM genre WHERE Name = %s)
+                      GROUP BY al.ArtistId) p1,
+
+                     (SELECT al.ArtistId,
+                             COUNT(*) AS popolarita
+                      FROM invoiceline il, track t, album al
+                      WHERE il.TrackId = t.TrackId
+                        AND t.AlbumId  = al.AlbumId
+                        AND t.GenreId  = (SELECT GenreId FROM genre WHERE Name = %s)
+                      GROUP BY al.ArtistId) p2
+
+                WHERE a1.ArtistId < a2.ArtistId
+                  AND p1.ArtistId = a1.ArtistId
+                  AND p2.ArtistId = a2.ArtistId
+                  AND il1.InvoiceId = i1.InvoiceId
+                  AND il2.InvoiceId = i2.InvoiceId
+                  AND i1.CustomerId = i2.CustomerId
+                  AND il1.TrackId   = t1.TrackId
+                  AND il2.TrackId   = t2.TrackId
+                  AND t1.AlbumId    = al1.AlbumId
+                  AND t2.AlbumId    = al2.AlbumId
+                  AND al1.ArtistId  = a1.ArtistId
+                  AND al2.ArtistId  = a2.ArtistId
+                  AND t1.GenreId    = (SELECT GenreId FROM genre WHERE Name = %s)
+                  AND t2.GenreId    = (SELECT GenreId FROM genre WHERE Name = %s)
+            """
+            # Nota: nessuna condizione su p1.popolarita vs p2.popolarita
+            # perché il grafo è non orientato — tutte le coppie vanno bene
+            cursor.execute(query, (genre, genre, genre, genre))
+            res = []
+            for row in cursor:
+                if row["nomeA"] in idMapNames and row["nomeB"] in idMapNames:
+                    res.append(Arco(idMapNames[row["nomeA"]], idMapNames[row["nomeB"]], row["peso"]))
+            return res
+        except Exception as e:
+            print(f"Errore getAllEdgesUndirected: {e}")
+            return []
+        finally:
+            cursor.close()
+            cnx.close()
+
+    # ══════════════════════════════════════════════════════════════
+    # VARIANTE: PESO = SOMMA QUANTITÀ PEZZI ACQUISTATI
+    # (es. se il peso non è il conteggio brani ma la quantità in InvoiceLine)
+    # ══════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def getAllEdgesWeightByQuantity(genre, idMapNames):
+        """
+        Come getAllEdgesUndirected ma il peso dell'arco è la SOMMA delle
+        QUANTITÀ acquistate (campo Quantity di InvoiceLine), non il conteggio.
+
+        Usato quando la consegna dice:
+            'peso = somma del numero di pezzi venduti (campo quantity)'
+        Esempio: esame bike_store Traccia B 10/07/2025.
+
+        Cambia rispetto ad getAllEdgesUndirected solo nella subquery di popolarità:
+            SUM(il.Quantity) invece di COUNT(*)
+        """
+        cnx = DBConnect.get_connection()
+        try:
+            cursor = cnx.cursor(dictionary=True, buffered=True)
+            query = """
+                SELECT DISTINCT
+                    a1.Name AS nomeA,
+                    a2.Name AS nomeB,
+                    p1.popolarita + p2.popolarita AS peso
+                FROM artist a1,
+                     artist a2,
+                     invoice i1,
+                     invoice i2,
+                     invoiceline il1,
+                     invoiceline il2,
+                     track t1,
+                     track t2,
+                     album al1,
+                     album al2,
+
+                     (SELECT al.ArtistId,
+                             SUM(il.Quantity) AS popolarita
+                      FROM invoiceline il, track t, album al
+                      WHERE il.TrackId = t.TrackId
+                        AND t.AlbumId  = al.AlbumId
+                        AND t.GenreId  = (SELECT GenreId FROM genre WHERE Name = %s)
+                      GROUP BY al.ArtistId) p1,
+
+                     (SELECT al.ArtistId,
+                             SUM(il.Quantity) AS popolarita
+                      FROM invoiceline il, track t, album al
+                      WHERE il.TrackId = t.TrackId
+                        AND t.AlbumId  = al.AlbumId
+                        AND t.GenreId  = (SELECT GenreId FROM genre WHERE Name = %s)
+                      GROUP BY al.ArtistId) p2
+
+                WHERE a1.ArtistId < a2.ArtistId
+                  AND p1.ArtistId = a1.ArtistId
+                  AND p2.ArtistId = a2.ArtistId
+                  AND il1.InvoiceId = i1.InvoiceId
+                  AND il2.InvoiceId = i2.InvoiceId
+                  AND i1.CustomerId = i2.CustomerId
+                  AND il1.TrackId   = t1.TrackId
+                  AND il2.TrackId   = t2.TrackId
+                  AND t1.AlbumId    = al1.AlbumId
+                  AND t2.AlbumId    = al2.AlbumId
+                  AND al1.ArtistId  = a1.ArtistId
+                  AND al2.ArtistId  = a2.ArtistId
+                  AND t1.GenreId    = (SELECT GenreId FROM genre WHERE Name = %s)
+                  AND t2.GenreId    = (SELECT GenreId FROM genre WHERE Name = %s)
+            """
+            cursor.execute(query, (genre, genre, genre, genre))
+            res = []
+            for row in cursor:
+                if row["nomeA"] in idMapNames and row["nomeB"] in idMapNames:
+                    res.append(Arco(idMapNames[row["nomeA"]], idMapNames[row["nomeB"]], row["peso"]))
+            return res
+        except Exception as e:
+            print(f"Errore getAllEdgesWeightByQuantity: {e}")
+            return []
+        finally:
+            cursor.close()
+            cnx.close()
+
+
+    # ══════════════════════════════════════════════════════════════
+    # ──────────────────────────────────────────────────────────────
+    # SCENARIO 1 – GRAFO ORIENTATO, VERSO IN BASE ALLA POPOLARITÀ
+    # Condizione arco: cliente comune ha comprato brani di entrambi
+    # Popolarità: COUNT(*) brani acquistati nel genere
+    # Peso: pop(A) + pop(B)
+    # Usato in: esame Chinook 19/05/2026
+    # ──────────────────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def getAllEdges1_popCount(genre, idMapNames):
+        """
+        SCENARIO 1a – Arco A→B quando pop(A) > pop(B).
+        Popolarità = COUNT(*) brani acquistati nel genere.
+        Nel Model: add_edge(e.a1, e.a2, weight=e.peso)
+        """
+        cnx = DBConnect.get_connection()
+        try:
+            cursor = cnx.cursor(dictionary=True, buffered=True)
+            query = """
+                SELECT DISTINCT
+                    a1.Name AS nomeA,
+                    a2.Name AS nomeB,
+                    p1.popolarita + p2.popolarita AS peso
+                FROM artist a1, artist a2,
+                     invoice i1, invoice i2,
+                     invoiceline il1, invoiceline il2,
+                     track t1, track t2,
+                     album al1, album al2,
+                     (SELECT al.ArtistId, COUNT(*) AS popolarita
+                      FROM invoiceline il, track t, album al
+                      WHERE il.TrackId = t.TrackId
+                        AND t.AlbumId  = al.AlbumId
+                        AND t.GenreId  = (SELECT GenreId FROM genre WHERE Name = %s)
+                      GROUP BY al.ArtistId) p1,
+                     (SELECT al.ArtistId, COUNT(*) AS popolarita
+                      FROM invoiceline il, track t, album al
+                      WHERE il.TrackId = t.TrackId
+                        AND t.AlbumId  = al.AlbumId
+                        AND t.GenreId  = (SELECT GenreId FROM genre WHERE Name = %s)
+                      GROUP BY al.ArtistId) p2
+                WHERE a1.ArtistId < a2.ArtistId
+                  AND p1.ArtistId  = a1.ArtistId
+                  AND p2.ArtistId  = a2.ArtistId
+                  AND il1.InvoiceId = i1.InvoiceId
+                  AND il2.InvoiceId = i2.InvoiceId
+                  AND i1.CustomerId = i2.CustomerId
+                  AND il1.TrackId   = t1.TrackId
+                  AND il2.TrackId   = t2.TrackId
+                  AND t1.AlbumId    = al1.AlbumId
+                  AND t2.AlbumId    = al2.AlbumId
+                  AND al1.ArtistId  = a1.ArtistId
+                  AND al2.ArtistId  = a2.ArtistId
+                  AND t1.GenreId    = (SELECT GenreId FROM genre WHERE Name = %s)
+                  AND t2.GenreId    = (SELECT GenreId FROM genre WHERE Name = %s)
+                  AND p1.popolarita > p2.popolarita
+            """
+            cursor.execute(query, (genre, genre, genre, genre))
+            res = []
+            for row in cursor:
+                if row["nomeA"] in idMapNames and row["nomeB"] in idMapNames:
+                    res.append(Arco(idMapNames[row["nomeA"]], idMapNames[row["nomeB"]], row["peso"]))
+            return res
+        except Exception as e:
+            print(f"Errore getAllEdges1_popCount: {e}")
+            return []
+        finally:
+            cursor.close()
+            cnx.close()
+
+    @staticmethod
+    def getAllEdges2_popCount(genre, idMapNames):
+        """
+        SCENARIO 1b – Arco B→A quando pop(B) > pop(A).
+        Stessa query di getAllEdges1, cambia solo la condizione finale (<).
+        Nel Model: add_edge(e.a2, e.a1, weight=e.peso)  ← ATTENZIONE inversione!
+        """
+        cnx = DBConnect.get_connection()
+        try:
+            cursor = cnx.cursor(dictionary=True, buffered=True)
+            query = """
+                SELECT DISTINCT
+                    a1.Name AS nomeA,
+                    a2.Name AS nomeB,
+                    p1.popolarita + p2.popolarita AS peso
+                FROM artist a1, artist a2,
+                     invoice i1, invoice i2,
+                     invoiceline il1, invoiceline il2,
+                     track t1, track t2,
+                     album al1, album al2,
+                     (SELECT al.ArtistId, COUNT(*) AS popolarita
+                      FROM invoiceline il, track t, album al
+                      WHERE il.TrackId = t.TrackId
+                        AND t.AlbumId  = al.AlbumId
+                        AND t.GenreId  = (SELECT GenreId FROM genre WHERE Name = %s)
+                      GROUP BY al.ArtistId) p1,
+                     (SELECT al.ArtistId, COUNT(*) AS popolarita
+                      FROM invoiceline il, track t, album al
+                      WHERE il.TrackId = t.TrackId
+                        AND t.AlbumId  = al.AlbumId
+                        AND t.GenreId  = (SELECT GenreId FROM genre WHERE Name = %s)
+                      GROUP BY al.ArtistId) p2
+                WHERE a1.ArtistId < a2.ArtistId
+                  AND p1.ArtistId  = a1.ArtistId
+                  AND p2.ArtistId  = a2.ArtistId
+                  AND il1.InvoiceId = i1.InvoiceId
+                  AND il2.InvoiceId = i2.InvoiceId
+                  AND i1.CustomerId = i2.CustomerId
+                  AND il1.TrackId   = t1.TrackId
+                  AND il2.TrackId   = t2.TrackId
+                  AND t1.AlbumId    = al1.AlbumId
+                  AND t2.AlbumId    = al2.AlbumId
+                  AND al1.ArtistId  = a1.ArtistId
+                  AND al2.ArtistId  = a2.ArtistId
+                  AND t1.GenreId    = (SELECT GenreId FROM genre WHERE Name = %s)
+                  AND t2.GenreId    = (SELECT GenreId FROM genre WHERE Name = %s)
+                  AND p1.popolarita < p2.popolarita
+            """
+            cursor.execute(query, (genre, genre, genre, genre))
+            res = []
+            for row in cursor:
+                if row["nomeA"] in idMapNames and row["nomeB"] in idMapNames:
+                    res.append(Arco(idMapNames[row["nomeA"]], idMapNames[row["nomeB"]], row["peso"]))
+            return res
+        except Exception as e:
+            print(f"Errore getAllEdges2_popCount: {e}")
+            return []
+        finally:
+            cursor.close()
+            cnx.close()
+
+    @staticmethod
+    def getAllEdges3_popCount(genre, idMapNames):
+        """
+        SCENARIO 1c – Archi A↔B quando pop(A) == pop(B).
+        Nel Model: add_edge(e.a1, e.a2) E add_edge(e.a2, e.a1)
+        """
+        cnx = DBConnect.get_connection()
+        try:
+            cursor = cnx.cursor(dictionary=True, buffered=True)
+            query = """
+                SELECT DISTINCT
+                    a1.Name AS nomeA,
+                    a2.Name AS nomeB,
+                    p1.popolarita + p2.popolarita AS peso
+                FROM artist a1, artist a2,
+                     invoice i1, invoice i2,
+                     invoiceline il1, invoiceline il2,
+                     track t1, track t2,
+                     album al1, album al2,
+                     (SELECT al.ArtistId, COUNT(*) AS popolarita
+                      FROM invoiceline il, track t, album al
+                      WHERE il.TrackId = t.TrackId
+                        AND t.AlbumId  = al.AlbumId
+                        AND t.GenreId  = (SELECT GenreId FROM genre WHERE Name = %s)
+                      GROUP BY al.ArtistId) p1,
+                     (SELECT al.ArtistId, COUNT(*) AS popolarita
+                      FROM invoiceline il, track t, album al
+                      WHERE il.TrackId = t.TrackId
+                        AND t.AlbumId  = al.AlbumId
+                        AND t.GenreId  = (SELECT GenreId FROM genre WHERE Name = %s)
+                      GROUP BY al.ArtistId) p2
+                WHERE a1.ArtistId < a2.ArtistId
+                  AND p1.ArtistId  = a1.ArtistId
+                  AND p2.ArtistId  = a2.ArtistId
+                  AND il1.InvoiceId = i1.InvoiceId
+                  AND il2.InvoiceId = i2.InvoiceId
+                  AND i1.CustomerId = i2.CustomerId
+                  AND il1.TrackId   = t1.TrackId
+                  AND il2.TrackId   = t2.TrackId
+                  AND t1.AlbumId    = al1.AlbumId
+                  AND t2.AlbumId    = al2.AlbumId
+                  AND al1.ArtistId  = a1.ArtistId
+                  AND al2.ArtistId  = a2.ArtistId
+                  AND t1.GenreId    = (SELECT GenreId FROM genre WHERE Name = %s)
+                  AND t2.GenreId    = (SELECT GenreId FROM genre WHERE Name = %s)
+                  AND p1.popolarita = p2.popolarita
+            """
+            cursor.execute(query, (genre, genre, genre, genre))
+            res = []
+            for row in cursor:
+                if row["nomeA"] in idMapNames and row["nomeB"] in idMapNames:
+                    res.append(Arco(idMapNames[row["nomeA"]], idMapNames[row["nomeB"]], row["peso"]))
+            return res
+        except Exception as e:
+            print(f"Errore getAllEdges3_popCount: {e}")
+            return []
+        finally:
+            cursor.close()
+            cnx.close()
+
+    # ══════════════════════════════════════════════════════════════
+    # ──────────────────────────────────────────────────────────────
+    # SCENARIO 2 – STESSO SCENARIO 1 MA POPOLARITÀ = SUM(Quantity)
+    # Differenza: invece di COUNT(*) si usa SUM(il.Quantity)
+    # Quando la consegna dice: 'popolarità = somma dei pezzi acquistati'
+    # Peso: pop(A) + pop(B) dove pop = SUM(Quantity)
+    # ──────────────────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def getAllEdges1_popQuantity(genre, idMapNames):
+        """
+        SCENARIO 2a – Arco A→B, pop(A) > pop(B).
+        Popolarità = SUM(Quantity) invece di COUNT(*).
+        """
+        cnx = DBConnect.get_connection()
+        try:
+            cursor = cnx.cursor(dictionary=True, buffered=True)
+            query = """
+                SELECT DISTINCT
+                    a1.Name AS nomeA,
+                    a2.Name AS nomeB,
+                    p1.popolarita + p2.popolarita AS peso
+                FROM artist a1, artist a2,
+                     invoice i1, invoice i2,
+                     invoiceline il1, invoiceline il2,
+                     track t1, track t2,
+                     album al1, album al2,
+                     (SELECT al.ArtistId, SUM(il.Quantity) AS popolarita
+                      FROM invoiceline il, track t, album al
+                      WHERE il.TrackId = t.TrackId
+                        AND t.AlbumId  = al.AlbumId
+                        AND t.GenreId  = (SELECT GenreId FROM genre WHERE Name = %s)
+                      GROUP BY al.ArtistId) p1,
+                     (SELECT al.ArtistId, SUM(il.Quantity) AS popolarita
+                      FROM invoiceline il, track t, album al
+                      WHERE il.TrackId = t.TrackId
+                        AND t.AlbumId  = al.AlbumId
+                        AND t.GenreId  = (SELECT GenreId FROM genre WHERE Name = %s)
+                      GROUP BY al.ArtistId) p2
+                WHERE a1.ArtistId < a2.ArtistId
+                  AND p1.ArtistId  = a1.ArtistId
+                  AND p2.ArtistId  = a2.ArtistId
+                  AND il1.InvoiceId = i1.InvoiceId
+                  AND il2.InvoiceId = i2.InvoiceId
+                  AND i1.CustomerId = i2.CustomerId
+                  AND il1.TrackId   = t1.TrackId
+                  AND il2.TrackId   = t2.TrackId
+                  AND t1.AlbumId    = al1.AlbumId
+                  AND t2.AlbumId    = al2.AlbumId
+                  AND al1.ArtistId  = a1.ArtistId
+                  AND al2.ArtistId  = a2.ArtistId
+                  AND t1.GenreId    = (SELECT GenreId FROM genre WHERE Name = %s)
+                  AND t2.GenreId    = (SELECT GenreId FROM genre WHERE Name = %s)
+                  AND p1.popolarita > p2.popolarita
+            """
+            cursor.execute(query, (genre, genre, genre, genre))
+            res = []
+            for row in cursor:
+                if row["nomeA"] in idMapNames and row["nomeB"] in idMapNames:
+                    res.append(Arco(idMapNames[row["nomeA"]], idMapNames[row["nomeB"]], row["peso"]))
+            return res
+        except Exception as e:
+            print(f"Errore getAllEdges1_popQuantity: {e}")
+            return []
+        finally:
+            cursor.close()
+            cnx.close()
+
+    @staticmethod
+    def getAllEdges2_popQuantity(genre, idMapNames):
+        """
+        SCENARIO 2b – Arco B→A, pop(B) > pop(A). SUM(Quantity).
+        Nel Model: add_edge(e.a2, e.a1, weight=e.peso)
+        """
+        cnx = DBConnect.get_connection()
+        try:
+            cursor = cnx.cursor(dictionary=True, buffered=True)
+            query = """
+                SELECT DISTINCT
+                    a1.Name AS nomeA,
+                    a2.Name AS nomeB,
+                    p1.popolarita + p2.popolarita AS peso
+                FROM artist a1, artist a2,
+                     invoice i1, invoice i2,
+                     invoiceline il1, invoiceline il2,
+                     track t1, track t2,
+                     album al1, album al2,
+                     (SELECT al.ArtistId, SUM(il.Quantity) AS popolarita
+                      FROM invoiceline il, track t, album al
+                      WHERE il.TrackId = t.TrackId
+                        AND t.AlbumId  = al.AlbumId
+                        AND t.GenreId  = (SELECT GenreId FROM genre WHERE Name = %s)
+                      GROUP BY al.ArtistId) p1,
+                     (SELECT al.ArtistId, SUM(il.Quantity) AS popolarita
+                      FROM invoiceline il, track t, album al
+                      WHERE il.TrackId = t.TrackId
+                        AND t.AlbumId  = al.AlbumId
+                        AND t.GenreId  = (SELECT GenreId FROM genre WHERE Name = %s)
+                      GROUP BY al.ArtistId) p2
+                WHERE a1.ArtistId < a2.ArtistId
+                  AND p1.ArtistId  = a1.ArtistId
+                  AND p2.ArtistId  = a2.ArtistId
+                  AND il1.InvoiceId = i1.InvoiceId
+                  AND il2.InvoiceId = i2.InvoiceId
+                  AND i1.CustomerId = i2.CustomerId
+                  AND il1.TrackId   = t1.TrackId
+                  AND il2.TrackId   = t2.TrackId
+                  AND t1.AlbumId    = al1.AlbumId
+                  AND t2.AlbumId    = al2.AlbumId
+                  AND al1.ArtistId  = a1.ArtistId
+                  AND al2.ArtistId  = a2.ArtistId
+                  AND t1.GenreId    = (SELECT GenreId FROM genre WHERE Name = %s)
+                  AND t2.GenreId    = (SELECT GenreId FROM genre WHERE Name = %s)
+                  AND p1.popolarita < p2.popolarita
+            """
+            cursor.execute(query, (genre, genre, genre, genre))
+            res = []
+            for row in cursor:
+                if row["nomeA"] in idMapNames and row["nomeB"] in idMapNames:
+                    res.append(Arco(idMapNames[row["nomeA"]], idMapNames[row["nomeB"]], row["peso"]))
+            return res
+        except Exception as e:
+            print(f"Errore getAllEdges2_popQuantity: {e}")
+            return []
+        finally:
+            cursor.close()
+            cnx.close()
+
+    @staticmethod
+    def getAllEdges3_popQuantity(genre, idMapNames):
+        """
+        SCENARIO 2c – Archi A↔B, pop(A) == pop(B). SUM(Quantity).
+        Nel Model: add_edge(e.a1, e.a2) E add_edge(e.a2, e.a1)
+        """
+        cnx = DBConnect.get_connection()
+        try:
+            cursor = cnx.cursor(dictionary=True, buffered=True)
+            query = """
+                SELECT DISTINCT
+                    a1.Name AS nomeA,
+                    a2.Name AS nomeB,
+                    p1.popolarita + p2.popolarita AS peso
+                FROM artist a1, artist a2,
+                     invoice i1, invoice i2,
+                     invoiceline il1, invoiceline il2,
+                     track t1, track t2,
+                     album al1, album al2,
+                     (SELECT al.ArtistId, SUM(il.Quantity) AS popolarita
+                      FROM invoiceline il, track t, album al
+                      WHERE il.TrackId = t.TrackId
+                        AND t.AlbumId  = al.AlbumId
+                        AND t.GenreId  = (SELECT GenreId FROM genre WHERE Name = %s)
+                      GROUP BY al.ArtistId) p1,
+                     (SELECT al.ArtistId, SUM(il.Quantity) AS popolarita
+                      FROM invoiceline il, track t, album al
+                      WHERE il.TrackId = t.TrackId
+                        AND t.AlbumId  = al.AlbumId
+                        AND t.GenreId  = (SELECT GenreId FROM genre WHERE Name = %s)
+                      GROUP BY al.ArtistId) p2
+                WHERE a1.ArtistId < a2.ArtistId
+                  AND p1.ArtistId  = a1.ArtistId
+                  AND p2.ArtistId  = a2.ArtistId
+                  AND il1.InvoiceId = i1.InvoiceId
+                  AND il2.InvoiceId = i2.InvoiceId
+                  AND i1.CustomerId = i2.CustomerId
+                  AND il1.TrackId   = t1.TrackId
+                  AND il2.TrackId   = t2.TrackId
+                  AND t1.AlbumId    = al1.AlbumId
+                  AND t2.AlbumId    = al2.AlbumId
+                  AND al1.ArtistId  = a1.ArtistId
+                  AND al2.ArtistId  = a2.ArtistId
+                  AND t1.GenreId    = (SELECT GenreId FROM genre WHERE Name = %s)
+                  AND t2.GenreId    = (SELECT GenreId FROM genre WHERE Name = %s)
+                  AND p1.popolarita = p2.popolarita
+            """
+            cursor.execute(query, (genre, genre, genre, genre))
+            res = []
+            for row in cursor:
+                if row["nomeA"] in idMapNames and row["nomeB"] in idMapNames:
+                    res.append(Arco(idMapNames[row["nomeA"]], idMapNames[row["nomeB"]], row["peso"]))
+            return res
+        except Exception as e:
+            print(f"Errore getAllEdges3_popQuantity: {e}")
+            return []
+        finally:
+            cursor.close()
+            cnx.close()
+
+    # ══════════════════════════════════════════════════════════════
+    # ──────────────────────────────────────────────────────────────
+    # SCENARIO 3 – GRAFO NON ORIENTATO, PESO = pop(A) + pop(B)
+    # Condizione arco: cliente comune
+    # Quando la consegna dice 'grafo NON orientato ma pesato'
+    # Nel Model: self._graph = nx.Graph()
+    #            add_edge(e.a1, e.a2, weight=e.peso)
+    # ──────────────────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def getAllEdgesUndirected_popCount(genre, idMapNames):
+        """
+        SCENARIO 3 – Grafo non orientato.
+        Peso = COUNT(*) pop(A) + COUNT(*) pop(B).
+        Una sola query, nessuna condizione su popolarità relativa.
+        """
+        cnx = DBConnect.get_connection()
+        try:
+            cursor = cnx.cursor(dictionary=True, buffered=True)
+            query = """
+                SELECT DISTINCT
+                    a1.Name AS nomeA,
+                    a2.Name AS nomeB,
+                    p1.popolarita + p2.popolarita AS peso
+                FROM artist a1, artist a2,
+                     invoice i1, invoice i2,
+                     invoiceline il1, invoiceline il2,
+                     track t1, track t2,
+                     album al1, album al2,
+                     (SELECT al.ArtistId, COUNT(*) AS popolarita
+                      FROM invoiceline il, track t, album al
+                      WHERE il.TrackId = t.TrackId
+                        AND t.AlbumId  = al.AlbumId
+                        AND t.GenreId  = (SELECT GenreId FROM genre WHERE Name = %s)
+                      GROUP BY al.ArtistId) p1,
+                     (SELECT al.ArtistId, COUNT(*) AS popolarita
+                      FROM invoiceline il, track t, album al
+                      WHERE il.TrackId = t.TrackId
+                        AND t.AlbumId  = al.AlbumId
+                        AND t.GenreId  = (SELECT GenreId FROM genre WHERE Name = %s)
+                      GROUP BY al.ArtistId) p2
+                WHERE a1.ArtistId < a2.ArtistId
+                  AND p1.ArtistId  = a1.ArtistId
+                  AND p2.ArtistId  = a2.ArtistId
+                  AND il1.InvoiceId = i1.InvoiceId
+                  AND il2.InvoiceId = i2.InvoiceId
+                  AND i1.CustomerId = i2.CustomerId
+                  AND il1.TrackId   = t1.TrackId
+                  AND il2.TrackId   = t2.TrackId
+                  AND t1.AlbumId    = al1.AlbumId
+                  AND t2.AlbumId    = al2.AlbumId
+                  AND al1.ArtistId  = a1.ArtistId
+                  AND al2.ArtistId  = a2.ArtistId
+                  AND t1.GenreId    = (SELECT GenreId FROM genre WHERE Name = %s)
+                  AND t2.GenreId    = (SELECT GenreId FROM genre WHERE Name = %s)
+            """
+            cursor.execute(query, (genre, genre, genre, genre))
+            res = []
+            for row in cursor:
+                if row["nomeA"] in idMapNames and row["nomeB"] in idMapNames:
+                    res.append(Arco(idMapNames[row["nomeA"]], idMapNames[row["nomeB"]], row["peso"]))
+            return res
+        except Exception as e:
+            print(f"Errore getAllEdgesUndirected_popCount: {e}")
+            return []
+        finally:
+            cursor.close()
+            cnx.close()
+
+    # ══════════════════════════════════════════════════════════════
+    # ──────────────────────────────────────────────────────────────
+    # SCENARIO 4 – GRAFO NON ORIENTATO, PESO = NUMERO BRANI IN COMUNE
+    # Condizione arco: i due artisti hanno almeno un brano nella
+    # stessa playlist
+    # Peso: numero di playlist in comune
+    # Quando la consegna dice 'esiste un arco se hanno brani
+    # nella stessa playlist, peso = numero playlist in comune'
+    # ──────────────────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def getAllEdges_playlist(genre, idMapNames):
+        """
+        SCENARIO 4 – Arco tra A e B se hanno brani nella stessa playlist.
+        Peso = numero di playlist in cui compaiono entrambi.
+        Grafo non orientato.
+        """
+        cnx = DBConnect.get_connection()
+        try:
+            cursor = cnx.cursor(dictionary=True, buffered=True)
+            query = """
+                SELECT DISTINCT
+                    a1.Name AS nomeA,
+                    a2.Name AS nomeB,
+                    COUNT(DISTINCT pt1.PlaylistId) AS peso
+                FROM artist a1, artist a2,
+                     album al1, album al2,
+                     track t1, track t2,
+                     playlisttrack pt1, playlisttrack pt2,
+                     genre g1, genre g2
+                WHERE a1.ArtistId < a2.ArtistId
+                  AND a1.ArtistId  = al1.ArtistId
+                  AND a2.ArtistId  = al2.ArtistId
+                  AND al1.AlbumId  = t1.AlbumId
+                  AND al2.AlbumId  = t2.AlbumId
+                  AND t1.TrackId   = pt1.TrackId
+                  AND t2.TrackId   = pt2.TrackId
+                  AND pt1.PlaylistId = pt2.PlaylistId
+                  AND t1.GenreId   = g1.GenreId
+                  AND t2.GenreId   = g2.GenreId
+                  AND g1.Name      = %s
+                  AND g2.Name      = %s
+                GROUP BY a1.Name, a2.Name
+                HAVING COUNT(DISTINCT pt1.PlaylistId) > 0
+            """
+            cursor.execute(query, (genre, genre))
+            res = []
+            for row in cursor:
+                if row["nomeA"] in idMapNames and row["nomeB"] in idMapNames:
+                    res.append(Arco(idMapNames[row["nomeA"]], idMapNames[row["nomeB"]], row["peso"]))
+            return res
+        except Exception as e:
+            print(f"Errore getAllEdges_playlist: {e}")
+            return []
+        finally:
+            cursor.close()
+            cnx.close()
+
+    # ══════════════════════════════════════════════════════════════
+    # ──────────────────────────────────────────────────────────────
+    # SCENARIO 5 – GRAFO NON ORIENTATO, PESO = NUMERO CLIENTI IN COMUNE
+    # Condizione arco: almeno un cliente ha comprato brani di entrambi
+    # Peso: numero di clienti che hanno comprato da entrambi
+    # Quando la consegna dice 'peso = numero clienti in comune'
+    # ──────────────────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def getAllEdges_numClientiComuni(genre, idMapNames):
+        """
+        SCENARIO 5 – Peso = numero di clienti che hanno acquistato
+        brani di entrambi gli artisti (non la somma delle popolarità).
+        Grafo non orientato.
+        """
+        cnx = DBConnect.get_connection()
+        try:
+            cursor = cnx.cursor(dictionary=True, buffered=True)
+            query = """
+                SELECT DISTINCT
+                    a1.Name AS nomeA,
+                    a2.Name AS nomeB,
+                    COUNT(DISTINCT i1.CustomerId) AS peso
+                FROM artist a1, artist a2,
+                     album al1, album al2,
+                     track t1, track t2,
+                     invoiceline il1, invoiceline il2,
+                     invoice i1, invoice i2
+                WHERE a1.ArtistId < a2.ArtistId
+                  AND a1.ArtistId  = al1.ArtistId
+                  AND a2.ArtistId  = al2.ArtistId
+                  AND al1.AlbumId  = t1.AlbumId
+                  AND al2.AlbumId  = t2.AlbumId
+                  AND t1.TrackId   = il1.TrackId
+                  AND t2.TrackId   = il2.TrackId
+                  AND il1.InvoiceId = i1.InvoiceId
+                  AND il2.InvoiceId = i2.InvoiceId
+                  AND i1.CustomerId = i2.CustomerId
+                  AND t1.GenreId   = (SELECT GenreId FROM genre WHERE Name = %s)
+                  AND t2.GenreId   = (SELECT GenreId FROM genre WHERE Name = %s)
+                GROUP BY a1.Name, a2.Name
+                HAVING COUNT(DISTINCT i1.CustomerId) > 0
+            """
+            cursor.execute(query, (genre, genre))
+            res = []
+            for row in cursor:
+                if row["nomeA"] in idMapNames and row["nomeB"] in idMapNames:
+                    res.append(Arco(idMapNames[row["nomeA"]], idMapNames[row["nomeB"]], row["peso"]))
+            return res
+        except Exception as e:
+            print(f"Errore getAllEdges_numClientiComuni: {e}")
+            return []
+        finally:
+            cursor.close()
+            cnx.close()
+
+    # ══════════════════════════════════════════════════════════════
+    # ──────────────────────────────────────────────────────────────
+    # SCENARIO 6 – GRAFO ORIENTATO, VERSO IN BASE ALLE VENDITE TOTALI
+    # Condizione arco: entrambi venduti almeno una volta
+    # Peso: vendite(A) + vendite(B)
+    # Verso: da chi ha più vendite verso chi ne ha meno
+    # Quando la consegna dice 'arco uscente dal nodo con più vendite'
+    # (es. variante bike_store Traccia A 10/07/2025)
+    # ──────────────────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def getAllEdges1_venditeMaggiori(genre, idMapNames):
+        """
+        SCENARIO 6a – Arco A→B quando vendite(A) > vendite(B).
+        Vendite = numero di fatture distinte che includono brani dell'artista.
+        Nel Model: add_edge(e.a1, e.a2, weight=e.peso)
+        """
+        cnx = DBConnect.get_connection()
+        try:
+            cursor = cnx.cursor(dictionary=True, buffered=True)
+            query = """
+                SELECT DISTINCT
+                    a1.Name AS nomeA,
+                    a2.Name AS nomeB,
+                    v1.vendite + v2.vendite AS peso
+                FROM artist a1, artist a2,
+                     invoice i1, invoice i2,
+                     invoiceline il1, invoiceline il2,
+                     track t1, track t2,
+                     album al1, album al2,
+                     (SELECT al.ArtistId, COUNT(DISTINCT il.InvoiceId) AS vendite
+                      FROM invoiceline il, track t, album al
+                      WHERE il.TrackId = t.TrackId
+                        AND t.AlbumId  = al.AlbumId
+                        AND t.GenreId  = (SELECT GenreId FROM genre WHERE Name = %s)
+                      GROUP BY al.ArtistId) v1,
+                     (SELECT al.ArtistId, COUNT(DISTINCT il.InvoiceId) AS vendite
+                      FROM invoiceline il, track t, album al
+                      WHERE il.TrackId = t.TrackId
+                        AND t.AlbumId  = al.AlbumId
+                        AND t.GenreId  = (SELECT GenreId FROM genre WHERE Name = %s)
+                      GROUP BY al.ArtistId) v2
+                WHERE a1.ArtistId < a2.ArtistId
+                  AND v1.ArtistId  = a1.ArtistId
+                  AND v2.ArtistId  = a2.ArtistId
+                  AND il1.InvoiceId = i1.InvoiceId
+                  AND il2.InvoiceId = i2.InvoiceId
+                  AND i1.CustomerId = i2.CustomerId
+                  AND il1.TrackId   = t1.TrackId
+                  AND il2.TrackId   = t2.TrackId
+                  AND t1.AlbumId    = al1.AlbumId
+                  AND t2.AlbumId    = al2.AlbumId
+                  AND al1.ArtistId  = a1.ArtistId
+                  AND al2.ArtistId  = a2.ArtistId
+                  AND t1.GenreId    = (SELECT GenreId FROM genre WHERE Name = %s)
+                  AND t2.GenreId    = (SELECT GenreId FROM genre WHERE Name = %s)
+                  AND v1.vendite > v2.vendite
+            """
+            cursor.execute(query, (genre, genre, genre, genre))
+            res = []
+            for row in cursor:
+                if row["nomeA"] in idMapNames and row["nomeB"] in idMapNames:
+                    res.append(Arco(idMapNames[row["nomeA"]], idMapNames[row["nomeB"]], row["peso"]))
+            return res
+        except Exception as e:
+            print(f"Errore getAllEdges1_venditeMaggiori: {e}")
+            return []
+        finally:
+            cursor.close()
+            cnx.close()
+
+    @staticmethod
+    def getAllEdges2_venditeMaggiori(genre, idMapNames):
+        """
+        SCENARIO 6b – Arco B→A quando vendite(B) > vendite(A).
+        Nel Model: add_edge(e.a2, e.a1, weight=e.peso)
+        """
+        cnx = DBConnect.get_connection()
+        try:
+            cursor = cnx.cursor(dictionary=True, buffered=True)
+            query = """
+                SELECT DISTINCT
+                    a1.Name AS nomeA,
+                    a2.Name AS nomeB,
+                    v1.vendite + v2.vendite AS peso
+                FROM artist a1, artist a2,
+                     invoice i1, invoice i2,
+                     invoiceline il1, invoiceline il2,
+                     track t1, track t2,
+                     album al1, album al2,
+                     (SELECT al.ArtistId, COUNT(DISTINCT il.InvoiceId) AS vendite
+                      FROM invoiceline il, track t, album al
+                      WHERE il.TrackId = t.TrackId
+                        AND t.AlbumId  = al.AlbumId
+                        AND t.GenreId  = (SELECT GenreId FROM genre WHERE Name = %s)
+                      GROUP BY al.ArtistId) v1,
+                     (SELECT al.ArtistId, COUNT(DISTINCT il.InvoiceId) AS vendite
+                      FROM invoiceline il, track t, album al
+                      WHERE il.TrackId = t.TrackId
+                        AND t.AlbumId  = al.AlbumId
+                        AND t.GenreId  = (SELECT GenreId FROM genre WHERE Name = %s)
+                      GROUP BY al.ArtistId) v2
+                WHERE a1.ArtistId < a2.ArtistId
+                  AND v1.ArtistId  = a1.ArtistId
+                  AND v2.ArtistId  = a2.ArtistId
+                  AND il1.InvoiceId = i1.InvoiceId
+                  AND il2.InvoiceId = i2.InvoiceId
+                  AND i1.CustomerId = i2.CustomerId
+                  AND il1.TrackId   = t1.TrackId
+                  AND il2.TrackId   = t2.TrackId
+                  AND t1.AlbumId    = al1.AlbumId
+                  AND t2.AlbumId    = al2.AlbumId
+                  AND al1.ArtistId  = a1.ArtistId
+                  AND al2.ArtistId  = a2.ArtistId
+                  AND t1.GenreId    = (SELECT GenreId FROM genre WHERE Name = %s)
+                  AND t2.GenreId    = (SELECT GenreId FROM genre WHERE Name = %s)
+                  AND v1.vendite < v2.vendite
+            """
+            cursor.execute(query, (genre, genre, genre, genre))
+            res = []
+            for row in cursor:
+                if row["nomeA"] in idMapNames and row["nomeB"] in idMapNames:
+                    res.append(Arco(idMapNames[row["nomeA"]], idMapNames[row["nomeB"]], row["peso"]))
+            return res
+        except Exception as e:
+            print(f"Errore getAllEdges2_venditeMaggiori: {e}")
+            return []
+        finally:
+            cursor.close()
+            cnx.close()
+
+    @staticmethod
+    def getAllEdges3_venditeMaggiori(genre, idMapNames):
+        """
+        SCENARIO 6c – Archi A↔B quando vendite(A) == vendite(B).
+        Nel Model: add_edge(e.a1, e.a2) E add_edge(e.a2, e.a1)
+        """
+        cnx = DBConnect.get_connection()
+        try:
+            cursor = cnx.cursor(dictionary=True, buffered=True)
+            query = """
+                SELECT DISTINCT
+                    a1.Name AS nomeA,
+                    a2.Name AS nomeB,
+                    v1.vendite + v2.vendite AS peso
+                FROM artist a1, artist a2,
+                     invoice i1, invoice i2,
+                     invoiceline il1, invoiceline il2,
+                     track t1, track t2,
+                     album al1, album al2,
+                     (SELECT al.ArtistId, COUNT(DISTINCT il.InvoiceId) AS vendite
+                      FROM invoiceline il, track t, album al
+                      WHERE il.TrackId = t.TrackId
+                        AND t.AlbumId  = al.AlbumId
+                        AND t.GenreId  = (SELECT GenreId FROM genre WHERE Name = %s)
+                      GROUP BY al.ArtistId) v1,
+                     (SELECT al.ArtistId, COUNT(DISTINCT il.InvoiceId) AS vendite
+                      FROM invoiceline il, track t, album al
+                      WHERE il.TrackId = t.TrackId
+                        AND t.AlbumId  = al.AlbumId
+                        AND t.GenreId  = (SELECT GenreId FROM genre WHERE Name = %s)
+                      GROUP BY al.ArtistId) v2
+                WHERE a1.ArtistId < a2.ArtistId
+                  AND v1.ArtistId  = a1.ArtistId
+                  AND v2.ArtistId  = a2.ArtistId
+                  AND il1.InvoiceId = i1.InvoiceId
+                  AND il2.InvoiceId = i2.InvoiceId
+                  AND i1.CustomerId = i2.CustomerId
+                  AND il1.TrackId   = t1.TrackId
+                  AND il2.TrackId   = t2.TrackId
+                  AND t1.AlbumId    = al1.AlbumId
+                  AND t2.AlbumId    = al2.AlbumId
+                  AND al1.ArtistId  = a1.ArtistId
+                  AND al2.ArtistId  = a2.ArtistId
+                  AND t1.GenreId    = (SELECT GenreId FROM genre WHERE Name = %s)
+                  AND t2.GenreId    = (SELECT GenreId FROM genre WHERE Name = %s)
+                  AND v1.vendite = v2.vendite
+            """
+            cursor.execute(query, (genre, genre, genre, genre))
+            res = []
+            for row in cursor:
+                if row["nomeA"] in idMapNames and row["nomeB"] in idMapNames:
+                    res.append(Arco(idMapNames[row["nomeA"]], idMapNames[row["nomeB"]], row["peso"]))
+            return res
+        except Exception as e:
+            print(f"Errore getAllEdges3_venditeMaggiori: {e}")
+            return []
+        finally:
+            cursor.close()
+            cnx.close()
+
+
+ # ══════════════════════════════════════════════════════════════
+# MODEL
+# ══════════════════════════════════════════════════════════════
+import networkx as nx
+
+
+class Model:
+    def __init__(self):
+        self._idMapNames = {}     # nome → nome  (chiave e valore uguali per Chinook)
+        self._graph = nx.DiGraph()  # default orientato; cambia in buildGraphUndirected
+
+    # ══════════════════════════════════════════════════════════════
+    # DROPDOWN
+    # ══════════════════════════════════════════════════════════════
+
+    def getAllGenre(self):
+        from database.DAO import DAO
+        return DAO.getAllGenre()
+
+    def getAllArtistsByGenre(self, genre):
+        """
+        Restituisce i nomi degli artisti del genere selezionato.
+        Usato per popolare il dropdown 'Artist' (Punto 2a esame 19/05/2026).
+        """
+        from database.DAO import DAO
+        return DAO.getAllArtistsByGenre(genre)
+
+    # ══════════════════════════════════════════════════════════════
+    # COSTRUZIONE GRAFO – ORIENTATO (esame Chinook 19/05/2026)
+    # ══════════════════════════════════════════════════════════════
+
+    def buildGraph(self, genre):
+        """
+        Costruisce il grafo ORIENTATO E PESATO degli artisti.
+        Usato in: esame Chinook 19/05/2026 – Punto 1b
+
+        Logica degli archi:
+          - Arco A→B se pop(A) > pop(B)  → getAllEdges1
+          - Arco B→A se pop(B) > pop(A)  → getAllEdges2 (aggiunto come e.a2→e.a1)
+          - Arco A↔B se pop(A) == pop(B) → getAllEdges3 (entrambe le direzioni)
+        """
+        self._idMapNames = {}
+        self._graph = nx.DiGraph()
+        from database.DAO import DAO
+
+        # Nodi
+        self._names = DAO.getAllNodes(genre)
+        for n in self._names:
+            self._idMapNames[n] = n
+        self._graph.add_nodes_from(self._names)
+
+        # Archi A→B (pop A > pop B)
+        allEdges1 = DAO.getAllEdges1(genre, idMapNames=self._idMapNames)
+        for e in allEdges1:
+            self._graph.add_edge(e.a1, e.a2, weight=e.peso)
+
+        # Archi B→A (pop B > pop A)
+        # ATTENZIONE: il DAO restituisce (nomeA, nomeB) con a1<a2,
+        # ma qui vogliamo B→A, quindi si inverte: e.a2 → e.a1
+        allEdges2 = DAO.getAllEdges2(genre, idMapNames=self._idMapNames)
+        for e in allEdges2:
+            self._graph.add_edge(e.a2, e.a1, weight=e.peso)
+
+        # Archi A↔B (stessa popolarità → entrambe le direzioni)
+        allEdges3 = DAO.getAllEdges3(genre, idMapNames=self._idMapNames)
+        for e in allEdges3:
+            self._graph.add_edge(e.a1, e.a2, weight=e.peso)
+            self._graph.add_edge(e.a2, e.a1, weight=e.peso)
+
+    # ══════════════════════════════════════════════════════════════
+    # COSTRUZIONE GRAFO – NON ORIENTATO
+    # Usato quando la consegna dice 'grafo NON orientato ma pesato'
+    # (es. esame imdb 26/05/2026, formula1 15/09/2025)
+    # ══════════════════════════════════════════════════════════════
+
+    def buildGraphUndirected(self, genre):
+        """
+        Costruisce il grafo NON ORIENTATO E PESATO.
+        Usato quando la consegna dice: 'grafo NON orientato ma pesato'.
+
+        Una sola chiamata al DAO perché non c'è verso da gestire.
+        Peso = pop(A) + pop(B) di default (getAllEdgesUndirected).
+        """
+        self._idMapNames = {}
+        self._graph = nx.Graph()  # ← Graph, non DiGraph
+        from database.DAO import DAO
+
+        self._names = DAO.getAllNodes(genre)
+        for n in self._names:
+            self._idMapNames[n] = n
+        self._graph.add_nodes_from(self._names)
+
+        allEdges = DAO.getAllEdgesUndirected(genre, idMapNames=self._idMapNames)
+        for e in allEdges:
+            self._graph.add_edge(e.a1, e.a2, weight=e.peso)
+
+    # ══════════════════════════════════════════════════════════════
+    # STATISTICHE BASE DEL GRAFO
+    # Usate sempre in Punto 1c di tutti gli esami
+    # ══════════════════════════════════════════════════════════════
+
+    def getGraphDetails(self):
+        """
+        Restituisce numero di nodi e numero di archi.
+        Usato in: tutti gli esami – Punto 1c
+        Output nel controller: ft.Text(f"Nodi: {nNodi}, Archi: {nArchi}")
+        """
+        return len(self._graph.nodes), len(self._graph.edges)
+
+    def getGraph(self):
+        """Rende il grafo accessibile dal controller per operazioni dirette."""
+        return self._graph
+
+    def getTop5Archi(self):
+        """
+        Restituisce i 5 archi con peso maggiore, ordinati in modo decrescente.
+        Usato in: tutti gli esami – Punto 1c
+
+        Output nel controller:
+            for arco in top5:
+                ft.Text(f"{arco[0]} -> {arco[1]} : {arco[2]['weight']}")
+
+        Nota: arco[0] = nodo partenza, arco[1] = nodo arrivo, arco[2] = dict attributi
+        """
+        return sorted(
+            self._graph.edges(data=True),
+            key=lambda x: x[2]["weight"],
+            reverse=True
+        )[:5]
+
+    # ══════════════════════════════════════════════════════════════
+    # INFLUENZA – GRAFO ORIENTATO
+    # Usato in: esame Chinook 19/05/2026 – Punto 1c
+    # ══════════════════════════════════════════════════════════════
+
+    def getInfluenza(self, nodo):
+        """
+        Calcola l'influenza di un artista come:
+            influenza = somma pesi archi USCENTI − somma pesi archi ENTRANTI
+
+        Usato internamente da getArtistaPiuInfluente().
+        Funziona solo su DiGraph (grafo orientato).
+        """
+        uscenti = sum(
+            self._graph[nodo][v]["weight"]
+            for v in self._graph.successors(nodo)
+        )
+        entranti = sum(
+            self._graph[u][nodo]["weight"]
+            for u in self._graph.predecessors(nodo)
+        )
+        return uscenti - entranti
+
+    def getArtistaPiuInfluente(self):
+        """
+        Restituisce l'artista con influenza massima e il suo punteggio.
+        Usato in: esame Chinook 19/05/2026 – Punto 1c
+
+        Output nel controller:
+            artista, infl = self._model.getArtistaPiuInfluente()
+            ft.Text(f"Artista più influente: {artista} ({infl})")
+        """
+        migliore = max(self._graph.nodes, key=self.getInfluenza)
+        return migliore, self.getInfluenza(migliore)
+
+    # ══════════════════════════════════════════════════════════════
+    # COMPONENTI CONNESSE
+    # Usato in: tutti gli esami – Punto 1c (numero componenti + componente maggiore)
+    # ══════════════════════════════════════════════════════════════
+
+    def getNumComponentiConnesse(self):
+        """
+        Restituisce il numero di componenti connesse.
+        - DiGraph → componenti DEBOLMENTE connesse (ignora il verso)
+        - Graph   → componenti connesse normali
+
+        Usato in: esami formula1, imdb, bike_store – Punto 1c
+        Output nel controller:
+            ft.Text(f"Il grafo ha {n} componenti connesse")
+        """
+        if isinstance(self._graph, nx.DiGraph):
+            return nx.number_weakly_connected_components(self._graph)
+        else:
+            return nx.number_connected_components(self._graph)
+
+    def getComponentiConnesse(self):
+        """
+        Restituisce la lista di tutte le componenti connesse,
+        ordinate per dimensione decrescente.
+        Ogni componente è un set di nomi di nodi.
+
+        Usato internamente da getComponenteMaggiore().
+        """
+        if isinstance(self._graph, nx.DiGraph):
+            componenti = list(nx.weakly_connected_components(self._graph))
+        else:
+            componenti = list(nx.connected_components(self._graph))
+        return sorted(componenti, key=len, reverse=True)
+
+    def getComponenteMaggiore(self):
+        """
+        Restituisce la lista dei nodi della componente connessa più grande.
+        Usato in: tutti gli esami – Punto 1c
+
+        Output nel controller:
+            componente = self._model.getComponenteMaggiore()
+            ft.Text(f"La più grande componente connessa è lunga {len(componente)}:")
+            for nodo in componente:
+                ft.Text(nodo)
+        """
+        componenti = self.getComponentiConnesse()
+        if not componenti:
+            return []
+        return list(componenti[0])
+
+    def getComponenteMaggioreOrdinataPerGrado(self):
+        """
+        Restituisce i nodi della componente più grande
+        ORDINATI per grado DECRESCENTE.
+
+        Usato in: esami formula1 12/01/2026, formula1 15/09/2025 – Punto 1c
+        La consegna dice: 'stamparne tutti i nodi, ordinati in senso
+        decrescente secondo il grado dei nodi'.
+
+        Output nel controller:
+            nodi = self._model.getComponenteMaggioreOrdinataPerGrado()
+            for nome, grado in nodi:
+                ft.Text(f"{nome} (grado={grado})")
+        """
+        componente = set(self.getComponenteMaggiore())
+        subgraph = self._graph.subgraph(componente)
+
+        # Per DiGraph usa degree totale (in+out); per Graph usa degree normale
+        nodi_con_grado = [(n, subgraph.degree(n)) for n in subgraph.nodes]
+        return sorted(nodi_con_grado, key=lambda x: x[1], reverse=True)
+
+    def getComponenteMaggioreOrdinataPerPesoMassimoArchi(self):
+        """
+        Restituisce i nodi della componente più grande ordinati per
+        PESO MASSIMO degli archi incidenti (decrescente).
+
+        Usato in: esame formula1 26/06/2025 Traccia C – Punto 1
+        La consegna dice: 'stamparne tutti i nodi, ordinati in senso
+        decrescente di peso massimo degli archi incidenti'.
+
+        Output nel controller:
+            nodi = self._model.getComponenteMaggioreOrdinataPerPesoMassimoArchi()
+            for nome, peso_max in nodi:
+                ft.Text(f"{nome} -- {peso_max}")
+        """
+        componente = set(self.getComponenteMaggiore())
+        subgraph = self._graph.subgraph(componente)
+
+        def peso_massimo_incidente(nodo):
+            # Tutti gli archi del nodo nel sottografo (entranti + uscenti)
+            pesi = [d["weight"] for _, _, d in subgraph.edges(nodo, data=True)]
+            if isinstance(subgraph, nx.DiGraph):
+                pesi += [d["weight"] for _, _, d in subgraph.in_edges(nodo, data=True)]
+            return max(pesi) if pesi else 0
+
+        nodi_con_peso = [(n, peso_massimo_incidente(n)) for n in subgraph.nodes]
+        return sorted(nodi_con_peso, key=lambda x: x[1], reverse=True)
+
+    def getComponenteMaggioreOrdinataPerPesoMinimoArchi(self):
+        """
+        Restituisce i nodi della componente più grande ordinati per
+        PESO MINIMO degli archi incidenti (decrescente).
+
+        Usato in: esame formula1 26/06/2025 Traccia B – Punto 1
+        La consegna dice: 'stamparne tutti i nodi, ordinati in senso
+        decrescente di peso minimo degli archi incidenti'.
+        """
+        componente = set(self.getComponenteMaggiore())
+        subgraph = self._graph.subgraph(componente)
+
+        def peso_minimo_incidente(nodo):
+            pesi = [d["weight"] for _, _, d in subgraph.edges(nodo, data=True)]
+            if isinstance(subgraph, nx.DiGraph):
+                pesi += [d["weight"] for _, _, d in subgraph.in_edges(nodo, data=True)]
+            return min(pesi) if pesi else 0
+
+        nodi_con_peso = [(n, peso_minimo_incidente(n)) for n in subgraph.nodes]
+        return sorted(nodi_con_peso, key=lambda x: x[1], reverse=True)
+
+    def getTop3Archi(self):
+        """
+        Restituisce i 3 archi con peso maggiore.
+        Usato in: esami formula1 12/01/2026, 15/09/2025 – Punto 1c
+        La consegna dice: 'stampare i TRE archi di peso maggiore'.
+
+        Output nel controller:
+            for arco in top3:
+                ft.Text(f"{arco[0]} -> {arco[1]} : {arco[2]['weight']}")
+        """
+        return sorted(
+            self._graph.edges(data=True),
+            key=lambda x: x[2]["weight"],
+            reverse=True
+        )[:3]
+
+    # ══════════════════════════════════════════════════════════════
+    # CAMMINI – PUNTO 2
+    # ══════════════════════════════════════════════════════════════
+
+    def getCamminoMaxDFS(self, nodoPartenza):
+        """
+        Trova il PERCORSO PIÙ LUNGO (in numero di nodi) partendo da nodoPartenza.
+        Algoritmo: DFS ricorsiva con backtracking.
+
+        Usato in: esame Chinook 19/05/2026 – Punto 2b
+                  esame bike_store 10/11/2025 – Punto 1d (cerca percorso massimo)
+
+        Args:
+            nodoPartenza: nome del nodo di partenza (stringa per Chinook)
+
+        Output nel controller:
+            cammino = self._model.getCamminoMaxDFS(artista)
+            for nodo in cammino:
+                ft.Text(nodo)
+        """
+        self._best_path = [nodoPartenza]
+
+        def dfs(nodo, visitati, cammino_corrente):
+            if len(cammino_corrente) > len(self._best_path):
+                self._best_path = list(cammino_corrente)
+
+            # successors per DiGraph, neighbors per Graph
+            if isinstance(self._graph, nx.DiGraph):
+                vicini = list(self._graph.successors(nodo))
+            else:
+                vicini = list(self._graph.neighbors(nodo))
+
+            for vicino in vicini:
+                if vicino not in visitati:
+                    visitati.add(vicino)
+                    cammino_corrente.append(vicino)
+                    dfs(vicino, visitati, cammino_corrente)
+                    cammino_corrente.pop()
+                    visitati.remove(vicino)
+
+        dfs(nodoPartenza, {nodoPartenza}, [nodoPartenza])
+        return self._best_path
+
+    def getCamminoMaxGlobale(self):
+        """
+        Trova il percorso più lungo in TUTTO IL GRAFO, provando ogni nodo
+        come punto di partenza.
+
+        Usato quando la consegna non specifica il nodo di partenza
+        (es. 'individuare il percorso più lungo dato il grafo').
+
+        ATTENZIONE: lento su grafi grandi (O(n) chiamate DFS).
+        Output nel controller: stessa struttura di getCamminoMaxDFS.
+        """
+        cammino_globale = []
+        for nodo in self._graph.nodes:
+            cammino = self.getCamminoMaxDFS(nodo)
+            if len(cammino) > len(cammino_globale):
+                cammino_globale = cammino
+        return cammino_globale
+
+    def getCamminoPesiCrescenti(self, nodoPartenza):
+        """
+        Cammino semplice di lunghezza MASSIMA con pesi degli archi
+        STRETTAMENTE CRESCENTI.
+
+        Usato in: esame Chinook 19/05/2026 – Punto 2c
+        La consegna dice: 'trovare un cammino semplice di lunghezza massima
+        tale che ogni arco successivo abbia peso strettamente crescente'.
+
+        Args:
+            nodoPartenza: nome del nodo di partenza
+
+        Output nel controller:
+            cammino = self._model.getCamminoPesiCrescenti(artista)
+            for nodo in cammino:
+                ft.Text(nodo)
+        """
+        self._best_path = [nodoPartenza]
+
+        def dfs(nodo, visitati, cammino_corrente, peso_precedente):
+            if len(cammino_corrente) > len(self._best_path):
+                self._best_path = list(cammino_corrente)
+
+            if isinstance(self._graph, nx.DiGraph):
+                vicini = list(self._graph.successors(nodo))
+            else:
+                vicini = list(self._graph.neighbors(nodo))
+
+            for vicino in vicini:
+                if vicino not in visitati:
+                    peso_arco = self._graph[nodo][vicino]["weight"]
+                    if peso_arco > peso_precedente:  # strettamente crescente
+                        visitati.add(vicino)
+                        cammino_corrente.append(vicino)
+                        dfs(vicino, visitati, cammino_corrente, peso_arco)
+                        cammino_corrente.pop()
+                        visitati.remove(vicino)
+
+        dfs(nodoPartenza, {nodoPartenza}, [nodoPartenza], float('-inf'))
+        return self._best_path
+
+    def getCamminoPesiDecrescenti(self, nodoPartenza):
+        """
+        Cammino semplice di lunghezza MASSIMA con pesi degli archi
+        STRETTAMENTE DECRESCENTI.
+
+        Usato in: esame bike_store 10/11/2025 – Punto 2 (Ricorsione)
+        La consegna dice: 'il peso degli archi nel percorso deve essere
+        strettamente decrescente'.
+
+        Args:
+            nodoPartenza: nome/id del nodo di partenza
+        """
+        self._best_path = [nodoPartenza]
+
+        def dfs(nodo, visitati, cammino_corrente, peso_precedente):
+            if len(cammino_corrente) > len(self._best_path):
+                self._best_path = list(cammino_corrente)
+
+            if isinstance(self._graph, nx.DiGraph):
+                vicini = list(self._graph.successors(nodo))
+            else:
+                vicini = list(self._graph.neighbors(nodo))
+
+            for vicino in vicini:
+                if vicino not in visitati:
+                    peso_arco = self._graph[nodo][vicino]["weight"]
+                    if peso_arco < peso_precedente:  # strettamente decrescente
+                        visitati.add(vicino)
+                        cammino_corrente.append(vicino)
+                        dfs(vicino, visitati, cammino_corrente, peso_arco)
+                        cammino_corrente.pop()
+                        visitati.remove(vicino)
+
+        dfs(nodoPartenza, {nodoPartenza}, [nodoPartenza], float('inf'))
+        return self._best_path
+
+    def getCamminoEtaDecrescente(self, nodoPartenza):
+        """
+        Cammino semplice di lunghezza massima dove ogni nodo successivo
+        ha ETÀ STRETTAMENTE DECRESCENTE.
+
+        Usato in: esame imdb 26/05/2026 – Punto 2b
+        La consegna dice: 'trovare un cammino semplice di lunghezza massima
+        tale che ogni nodo successivo abbia un età strettamente decrescente'.
+
+        PREREQUISITO: ogni nodo deve avere l'attributo 'eta' impostato
+        durante la costruzione del grafo, es:
+            self._graph.add_node(nome, eta=valore_eta)
+
+        Args:
+            nodoPartenza: nome del nodo di partenza
+        """
+        self._best_path = [nodoPartenza]
+
+        def dfs(nodo, visitati, cammino_corrente, eta_precedente):
+            if len(cammino_corrente) > len(self._best_path):
+                self._best_path = list(cammino_corrente)
+
+            vicini = list(self._graph.neighbors(nodo))  # Graph non orientato per imdb
+            for vicino in vicini:
+                if vicino not in visitati:
+                    eta_vicino = self._graph.nodes[vicino].get("eta", 0)
+                    if eta_vicino < eta_precedente:  # strettamente decrescente
+                        visitati.add(vicino)
+                        cammino_corrente.append(vicino)
+                        dfs(vicino, visitati, cammino_corrente, eta_vicino)
+                        cammino_corrente.pop()
+                        visitati.remove(vicino)
+
+        eta_start = self._graph.nodes[nodoPartenza].get("eta", float('inf'))
+        dfs(nodoPartenza, {nodoPartenza}, [nodoPartenza], eta_start)
+        return self._best_path
+
+
+ # ══════════════════════════════════════════════════════════════
+# CONTROLLER
+# ══════════════════════════════════════════════════════════════
+import flet as ft
+
+
+class Controller:
+    def __init__(self, view, model):
+        self._view = view
+        self._model = model
+        self._choiceGenre = None    # genere selezionato dal dropdown
+        self._choiceArtist = None   # artista selezionato dal dropdown (Punto 2)
+
+    # ══════════════════════════════════════════════════════════════
+    # DROPDOWN
+    # ══════════════════════════════════════════════════════════════
+
+    def fillDDGenre(self):
+        """
+        Popola il dropdown dei generi all'avvio dell'applicazione.
+        Chiamato da view.load_interface().
+        """
+        generi = self._model.getAllGenre()
+        genreOptions = list(map(lambda x: ft.dropdown.Option(x), generi))
+        self._view._ddGenre.options = genreOptions
+        self._view.update_page()
+
+    def _choiceDDGenre(self, e):
+        """
+        Salva il genere selezionato dall'utente.
+        Collegato all'evento on_change del dropdown genere.
+        """
+        self._choiceGenre = e.control.value
+        print(f"Genere selezionato: {self._choiceGenre}")
+
+    def _choiceDDArtist(self, e):
+        """
+        Salva l'artista selezionato dall'utente.
+        Collegato all'evento on_change del dropdown artista (Punto 2).
+        """
+        self._choiceArtist = e.control.value
+        print(f"Artista selezionato: {self._choiceArtist}")
+
+    def fillDDArtist(self):
+        """
+        Popola il dropdown degli artisti dopo aver costruito il grafo.
+        Chiamato alla fine di handleCreaGrafo.
+        Usato in: esame Chinook 19/05/2026 – Punto 2a
+        """
+        if self._choiceGenre is None:
+            return
+        artisti = self._model.getAllArtistsByGenre(self._choiceGenre)
+        artistOptions = list(map(lambda x: ft.dropdown.Option(x), artisti))
+        self._view._ddArtist.options = artistOptions
+        self._view._ddArtist.disabled = False
+        self._view.update_page()
+
+    # ══════════════════════════════════════════════════════════════
+    # COSTRUZIONE GRAFO – Punto 1
+    # ══════════════════════════════════════════════════════════════
+
+    def handleCreaGrafo(self, e):
+        """
+        Gestisce il click sul pulsante 'Crea Grafo'.
+        Usato in: esame Chinook 19/05/2026 – Punto 1b/1c
+
+        Mostra in output:
+          - numero nodi e archi
+          - artista più influente (peso uscente - peso entrante)
+          - top 5 archi per peso
+          - numero componenti connesse
+          - nodi della componente più grande
+        """
+        self._view.txt_result.controls.clear()
+
+        # Validazione: genere selezionato?
+        if self._choiceGenre is None:
+            self._view.txt_result.controls.append(
+                ft.Text("Seleziona un genere!", color="red")
+            )
+            self._view.update_page()
+            return
+
+        # Costruisce il grafo
+        self._model.buildGraph(self._choiceGenre)
+        self._graph = self._model.getGraph()
+
+        # Numero nodi e archi
+        nNodi, nArchi = self._model.getGraphDetails()
+        self._view.txt_result.controls.append(
+            ft.Text("Grafo correttamente creato:", color="green")
+        )
+        self._view.txt_result.controls.append(ft.Text(f"Numero di nodi:{nNodi}"))
+        self._view.txt_result.controls.append(ft.Text(f"Numero di archi:{nArchi}"))
+
+        # Artista più influente
+        artista, infl = self._model.getArtistaPiuInfluente()
+        self._view.txt_result.controls.append(
+            ft.Text(f"Artista più influente: {artista}, con influenza: {int(infl)}")
+        )
+
+        # Top 5 archi
+        self._view.txt_result.controls.append(ft.Text("Top 5 archi:"))
+        top5 = self._model.getTop5Archi()
+        for arco in top5:
+            self._view.txt_result.controls.append(
+                ft.Text(f"{arco[0]} -> {arco[1]} : {int(arco[2]['weight'])}")
+            )
+
+        # Componenti connesse
+        nComp = self._model.getNumComponentiConnesse()
+        self._view.txt_result.controls.append(
+            ft.Text(f"Il grafo ha {nComp} componenti connesse")
+        )
+
+        # Componente maggiore
+        componente = self._model.getComponenteMaggiore()
+        self._view.txt_result.controls.append(
+            ft.Text(f"La più grande componente connessa è lunga {len(componente)}:")
+        )
+        for nodo in componente:
+            self._view.txt_result.controls.append(ft.Text(f"  {nodo}"))
+
+        # Popola dropdown artisti per Punto 2
+        self.fillDDArtist()
+
+        self._view.update_page()
+
+    # ──────────────────────────────────────────────────────────────
+    # VARIANTE: handleCreaGrafo con top3 archi e componente ordinata per grado
+    # Usato in: esami formula1 12/01/2026, 15/09/2025
+    # Stessa struttura di handleCreaGrafo, cambia getTop3Archi e
+    # getComponenteMaggioreOrdinataPerGrado al posto dei metodi standard
+    # ──────────────────────────────────────────────────────────────
+
+    def handleStampaDettagliF1(self, e):
+        """
+        Gestisce 'Stampa Dettagli' per gli esami formula1.
+        Usato in: esame formula1 12/01/2026, 15/09/2025 – Punto 1c (Stampa Dettagli)
+
+        Differenze rispetto a handleCreaGrafo:
+          - 3 archi invece di 5
+          - Componente ordinata per GRADO (non dimensione)
+          - Non c'è artista più influente
+        """
+        self._view.txt_result.controls.clear()
+
+        if self._graph is None:
+            self._view.txt_result.controls.append(
+                ft.Text("Crea prima il grafo!", color="red")
+            )
+            self._view.update_page()
+            return
+
+        # Top 3 archi
+        self._view.txt_result.controls.append(ft.Text("Archi di peso maggiore:", color="red"))
+        top3 = self._model.getTop3Archi()
+        for arco in top3:
+            self._view.txt_result.controls.append(
+                ft.Text(f"{arco[0]} -> {arco[1]} ({int(arco[2]['weight'])} piloti condivisi)")
+            )
+
+        # Numero componenti connesse
+        nComp = self._model.getNumComponentiConnesse()
+        self._view.txt_result.controls.append(
+            ft.Text(f"Il grafo ha {nComp} componenti connesse", color="red")
+        )
+
+        # Componente più grande ordinata per grado
+        nodi_con_grado = self._model.getComponenteMaggioreOrdinataPerGrado()
+        self._view.txt_result.controls.append(
+            ft.Text(f"Componente più grande ({len(nodi_con_grado)} nodi):", color="red")
+        )
+        for nome, grado in nodi_con_grado:
+            self._view.txt_result.controls.append(
+                ft.Text(f"  {nome} (grado={grado})")
+            )
+
+        self._view.update_page()
+
+    # ──────────────────────────────────────────────────────────────
+    # VARIANTE: handleCreaGrafo con componente ordinata per peso massimo archi
+    # Usato in: esame formula1 26/06/2025 Traccia C
+    # ──────────────────────────────────────────────────────────────
+
+    def handleStampaDettagliF1C(self, e):
+        """
+        Gestisce 'Stampa Dettagli' per esame formula1 26/06/2025 Traccia C.
+        Componente ordinata per peso MASSIMO degli archi incidenti.
+        """
+        self._view.txt_result.controls.clear()
+
+        nNodi, nArchi = self._model.getGraphDetails()
+        self._view.txt_result.controls.append(ft.Text("Stampa dettagli:"))
+
+        nodi_con_peso = self._model.getComponenteMaggioreOrdinataPerPesoMassimoArchi()
+        for nome, peso_max in nodi_con_peso:
+            self._view.txt_result.controls.append(
+                ft.Text(f"{nome} -- {int(peso_max)}")
+            )
+
+        self._view.update_page()
+
+    # ══════════════════════════════════════════════════════════════
+    # CAMMINI – Punto 2
+    # ══════════════════════════════════════════════════════════════
+
+    def handleCammino(self, e):
+        """
+        Gestisce il click su 'Trova Cammino'.
+        Usato in: esame Chinook 19/05/2026 – Punto 2b/2c
+
+        Mostra:
+          - Il percorso più lungo dal nodo selezionato (DFS)
+          - Il cammino con pesi strettamente crescenti (Punto 2c)
+
+        PREREQUISITO: l'utente deve aver selezionato un artista dal dropdown.
+        """
+        self._view.txt_result.controls.clear()
+
+        # Validazione
+        if self._choiceArtist is None:
+            self._view.txt_result.controls.append(
+                ft.Text("Seleziona un artista!", color="red")
+            )
+            self._view.update_page()
+            return
+
+        if self._model.getGraph().number_of_nodes() == 0:
+            self._view.txt_result.controls.append(
+                ft.Text("Crea prima il grafo!", color="red")
+            )
+            self._view.update_page()
+            return
+
+        # Punto 2b: percorso più lungo
+        self._view.txt_result.controls.append(
+            ft.Text("Percorso più lungo:", color="blue")
+        )
+        cammino = self._model.getCamminoMaxDFS(self._choiceArtist)
+        self._view.txt_result.controls.append(
+            ft.Text(f"Lunghezza: {len(cammino)}")
+        )
+        for nodo in cammino:
+            self._view.txt_result.controls.append(ft.Text(f"  {nodo}"))
+
+        # Punto 2c: cammino con pesi crescenti
+        self._view.txt_result.controls.append(
+            ft.Text("Cammino con pesi strettamente crescenti:", color="blue")
+        )
+        cammino_crescente = self._model.getCamminoPesiCrescenti(self._choiceArtist)
+        self._view.txt_result.controls.append(
+            ft.Text(f"Lunghezza: {len(cammino_crescente)}")
+        )
+        for nodo in cammino_crescente:
+            self._view.txt_result.controls.append(ft.Text(f"  {nodo}"))
+
+        self._view.update_page()
+
+    def handleCamminoGlobale(self, e):
+        """
+        Trova il percorso più lungo nell'INTERO grafo (prova tutti i nodi).
+        Usato quando la consegna non specifica il nodo di partenza:
+            'individuare il percorso più lungo dato il grafo costruito'
+        Es: esame imdb 26/05/2026 – Punto 2a
+        """
+        self._view.txt_result.controls.clear()
+
+        if self._model.getGraph().number_of_nodes() == 0:
+            self._view.txt_result.controls.append(
+                ft.Text("Crea prima il grafo!", color="red")
+            )
+            self._view.update_page()
+            return
+
+        cammino = self._model.getCamminoMaxGlobale()
+        self._view.txt_result.controls.append(
+            ft.Text(f"Percorso più lungo globale (lunghezza: {len(cammino)}):", color="blue")
+        )
+        for nodo in cammino:
+            self._view.txt_result.controls.append(ft.Text(f"  {nodo}"))
+
+        self._view.update_page()
+
+    def handleCamminoPesiDecrescenti(self, e):
+        """
+        Cammino con pesi STRETTAMENTE DECRESCENTI dal nodo selezionato.
+        Usato in: esame bike_store 10/11/2025 – Punto 2 (pulsante 'Ricorsione')
+        """
+        self._view.txt_result.controls.clear()
+
+        if self._choiceArtist is None:
+            self._view.txt_result.controls.append(
+                ft.Text("Seleziona un nodo di partenza!", color="red")
+            )
+            self._view.update_page()
+            return
+
+        cammino = self._model.getCamminoPesiDecrescenti(self._choiceArtist)
+        self._view.txt_result.controls.append(
+            ft.Text(f"Cammino pesi decrescenti (lunghezza: {len(cammino)}):", color="blue")
+        )
+        for nodo in cammino:
+            self._view.txt_result.controls.append(ft.Text(f"  {nodo}"))
+
+        self._view.update_page()
